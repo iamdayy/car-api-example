@@ -1,36 +1,64 @@
 /**
- * store.ts — penyimpanan API key, tier, dan pemakaian (IN-MEMORY, contoh).
+ * store.ts — penyimpanan API key, tier, dan pemakaian IN-MEMORY.
  *
- * Di produksi ini diganti PostgreSQL:
- *   tabel api_keys (key hash, user_id, tier, created_at)
- *   tabel api_usage (key_id, tanggal, jumlah_hit)
- * Rate limit dihitung per key per hari kalender.
+ * Dipakai bila DATABASE_URL tidak diisi. Implementasi PostgreSQL-nya
+ * ada di ./db/stores.ts (DbKeyStore) dengan kontrak yang sama
+ * (KeyStoreLike) — perilaku endpoint tidak berubah di kedua mode.
+ *
+ * Rate limit dihitung per key per hari kalender (UTC).
  */
 import { randomBytes } from "node:crypto";
 import { TIER_LIMITS, type Tier } from "@car-api/shared";
 
+/** API key demo publik untuk dokumentasi & portal (tier free). */
+export const DEMO_API_KEY = "carapi_demo_9f2e7a1b4c5d6e7f";
+
 export interface ApiKeyRecord {
+  /** UUID baris api_keys (mode DB saja). */
+  id?: string;
+  /** API key plaintext (hanya diketahui saat dibuat / key demo). */
   key: string;
   name: string;
   email: string;
   tier: Tier;
   createdAt: string;
   totalHits: number;
-  /** hit per tanggal (YYYY-MM-DD) */
+  /** hit per tanggal (YYYY-MM-DD) — hanya dipakai mode in-memory. */
   dailyHits: Map<string, number>;
 }
 
-function todayKey(): string {
+export interface UsageInfo {
+  tier: Tier;
+  limitPerDay: number;
+  usedToday: number;
+  remainingToday: number;
+  totalHits: number;
+  resetsAt: string;
+}
+
+/** Kontrak store API key — diimplementasi mode in-memory dan PostgreSQL. */
+export interface KeyStoreLike {
+  readonly freeLimit: number;
+  readonly proLimit: number;
+  limitFor(tier: Tier): number;
+  create(name: string, email: string, tier?: Tier): Promise<ApiKeyRecord>;
+  seedDemoKey(): Promise<ApiKeyRecord>;
+  get(key: string): Promise<ApiKeyRecord | undefined>;
+  usageFor(rec: ApiKeyRecord): Promise<UsageInfo>;
+  recordHit(rec: ApiKeyRecord, endpoint?: string): Promise<{ allowed: boolean; remaining: number }>;
+}
+
+export function todayKey(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function nextMidnightIso(): string {
+export function nextMidnightIso(): string {
   const d = new Date();
   d.setHours(24, 0, 0, 0);
   return d.toISOString();
 }
 
-export class KeyStore {
+export class KeyStore implements KeyStoreLike {
   private keys = new Map<string, ApiKeyRecord>();
 
   /** Limit harian per tier — bisa diubah lewat env untuk pengujian. */
@@ -50,7 +78,7 @@ export class KeyStore {
     return tier === "pro" ? this.proLimit : this.freeLimit;
   }
 
-  create(name: string, email: string, tier: Tier = "free"): ApiKeyRecord {
+  async create(name: string, email: string, tier: Tier = "free"): Promise<ApiKeyRecord> {
     const key = `carapi_${randomBytes(24).toString("hex")}`;
     const rec: ApiKeyRecord = {
       key,
@@ -66,12 +94,11 @@ export class KeyStore {
   }
 
   /** Key demo publik untuk dokumentasi & portal (tier free). */
-  seedDemoKey(): ApiKeyRecord {
-    const demoKey = "carapi_demo_9f2e7a1b4c5d6e7f";
-    const existing = this.keys.get(demoKey);
+  async seedDemoKey(): Promise<ApiKeyRecord> {
+    const existing = this.keys.get(DEMO_API_KEY);
     if (existing) return existing;
     const rec: ApiKeyRecord = {
-      key: demoKey,
+      key: DEMO_API_KEY,
       name: "Demo publik",
       email: "demo@carapi.example",
       tier: "free",
@@ -79,15 +106,15 @@ export class KeyStore {
       totalHits: 0,
       dailyHits: new Map(),
     };
-    this.keys.set(demoKey, rec);
+    this.keys.set(DEMO_API_KEY, rec);
     return rec;
   }
 
-  get(key: string): ApiKeyRecord | undefined {
+  async get(key: string): Promise<ApiKeyRecord | undefined> {
     return this.keys.get(key);
   }
 
-  usageFor(rec: ApiKeyRecord) {
+  async usageFor(rec: ApiKeyRecord): Promise<UsageInfo> {
     const today = todayKey();
     const used = rec.dailyHits.get(today) ?? 0;
     const limit = this.limitFor(rec.tier);
@@ -102,11 +129,18 @@ export class KeyStore {
   }
 
   /**
-   * Catat 1 hit. Mengembalikan null bila kuota hari ini sudah habis.
+   * Catat 1 hit. Mengembalikan allowed:false bila kuota hari ini sudah
+   * habis (hit yang ditolak TIDAK menambah hitungan).
    * Dipanggil SETELAH key tervalidasi, SEBELUM handler endpoint jalan —
-   * jadi hit yang ditolak rate limit tetap tercatat sebagai pemakaian.
+   * jadi request yang lolos auth tetap dihitung meskipun handler
+   * kemudian mengembalikan 404.
+   * (Parameter endpoint diabaikan di mode in-memory; dipakai mode DB
+   * untuk kolom endpoint di usage_logs.)
    */
-  recordHit(rec: ApiKeyRecord): { allowed: boolean; remaining: number } {
+  async recordHit(
+    rec: ApiKeyRecord,
+    _endpoint = "/v1/specs",
+  ): Promise<{ allowed: boolean; remaining: number }> {
     const today = todayKey();
     const used = rec.dailyHits.get(today) ?? 0;
     const limit = this.limitFor(rec.tier);

@@ -23,6 +23,12 @@ car-api-example/
 │   │       ├── index.ts    semua endpoint + middleware auth/rate-limit
 │   │       ├── data.ts     seed 10 mobil Indonesia (DATA CONTOH)
 │   │       ├── store.ts    API key, tier, pemakaian (in-memory)
+│   │       ├── db/
+│   │       │   ├── schema.ts   skema Drizzle (9 tabel, sesuai SRS bag. 5)
+│   │       │   ├── client.ts   klien Drizzle + flag isDbEnabled
+│   │       │   ├── stores.ts   DbKeyStore + DbCarStore (PostgreSQL)
+│   │       │   ├── seed.ts     seed idempotent (mobil, parameter, paket, key demo)
+│   │       │   └── migrate.ts  jalankan migrasi
 │   │       ├── openapi.ts  spesifikasi OpenAPI 3.0
 │   │       └── docs.ts     halaman dokumentasi HTML (/v1/docs)
 │   └── portal/         Astro (developer portal, port 4321)
@@ -40,7 +46,8 @@ car-api-example/
 ```
 
 **Tech stack:** Turborepo + pnpm workspaces · API: Hono + TypeScript (Node)
-· Portal: Astro · Database produksi: PostgreSQL (lihat "Yang masih demo").
+· Portal: Astro · Database: PostgreSQL via Drizzle ORM (lihat
+"Database (PostgreSQL / Neon)" di bawah).
 
 **Desain data** (sesuai yang dijelaskan ke klien): tiap mobil punya penanda
 jenis penggerak dengan taksonomi ICE, MHEV, FHEV, PHEV, REEV, BEV, FCEV,
@@ -64,11 +71,54 @@ Server dev tetap berjalan setelah verifikasi (API :3001, portal :4321).
 
 | Variabel | Default | Keterangan |
 |---|---|---|
+| `DATABASE_URL` | *(kosong)* | Connection string PostgreSQL. Bila kosong → API jalan in-memory seperti semula. Bila diisi → API memakai PostgreSQL (Drizzle). Lihat "Database (PostgreSQL / Neon)". |
 | `PORT` | `3001` | Port API |
 | `CARAPI_PUBLIC_URL` | `http://localhost:PORT` | URL publik API (dipakai di halaman docs) |
 | `CARAPI_FREE_DAILY_LIMIT` | `100` | Kuota harian tier Free (bisa dikecilkan untuk uji rate limit) |
 | `CARAPI_PRO_DAILY_LIMIT` | `10000` | Kuota harian tier Pro |
 | `PUBLIC_API_URL` | `http://localhost:3001` | URL API yang dipakai portal (Astro) |
+
+## Database (PostgreSQL / Neon)
+
+Kerangka PostgreSQL sudah terpasang (Drizzle ORM + driver `postgres`).
+API otomatis memakai PostgreSQL begitu `DATABASE_URL` diisi, dan tetap
+jalan in-memory bila tidak diisi — perilaku endpoint sama di kedua mode.
+
+```bash
+# 1. Buat database Neon (user yang membuat):
+#    - Buka https://neon.tech → buat project + database (mis. car_api)
+#    - Di dashboard Neon → Connection Details → pilih "Pooled connection"
+#    - Salin connection string-nya
+#
+#    Untuk pengujian lokal di VM ini sudah ada PostgreSQL 16 dengan
+#    database car_api (user carapi). Lihat apps/api/.env.
+
+# 2. Isi DATABASE_URL (salin apps/api/.env.example ke apps/api/.env)
+#    Neon:  DATABASE_URL=postgresql://<user>:<password>@<host>-pooler.<region>.neon.tech/<database>?sslmode=require
+#    Lokal: DATABASE_URL=postgresql://carapi:carapi_dev_local@localhost:5432/car_api
+
+# 3. Migrasi + seed (dari root repo)
+pnpm --filter @car-api/api db:generate   # buat file migrasi dari skema (sudah ada di apps/api/drizzle/)
+pnpm --filter @car-api/api db:migrate    # jalankan migrasi ke database
+pnpm --filter @car-api/api db:seed       # isi 8 merek, 10 mobil, 36 parameter, paket Free/Pro, key demo
+                                          # (idempotent — aman dijalankan ulang)
+
+# 4. Jalankan API seperti biasa — log startup menunjukkan mode yang aktif:
+pnpm dev
+# "Penyimpanan: PostgreSQL (DATABASE_URL)"  atau  "Penyimpanan: in-memory (DATABASE_URL tidak diisi)"
+```
+
+**Yang disimpan di database:** 9 tabel sesuai SRS bagian 5 — `brands`,
+`cars` (semua field spek), `parameters` (katalog 36 parameter),
+`car_parameter_values` (jejak kurasi: sumber + waktu verifikasi per
+nilai), `developers`, `api_keys` (hanya SHA-256 dari key, bukan plaintext),
+`usage_logs`, `plans`, `payments`. API key demo yang sama seperti mode
+in-memory: `carapi_demo_9f2e7a1b4c5d6e7f` (tier free).
+
+**Catatan Neon:** pakai *pooled* connection string dari dashboard Neon.
+Driver dikonfigurasi `prepare: false` karena PgBouncer (mode transaksi)
+tidak mendukung prepared statement — pengaturan ini juga aman untuk
+PostgreSQL lokal.
 
 ## Endpoint API
 
@@ -122,7 +172,7 @@ curl http://localhost:3001/v1/usage \
 | Scope (Rp7jt) | Status di prototype ini |
 |---|---|
 | Pengumpulan + kurasi data spek | Seed 10 mobil Indonesia di `apps/api/src/data.ts` — **DATA CONTOH**, tiap nilai harus diverifikasi dari situs resmi pabrikan sebelum tayang (lihat bawah) |
-| Database | In-memory (Map) di contoh; skema siap dipindah ke PostgreSQL |
+| Database | ✅ Kerangka PostgreSQL terpasang (Drizzle ORM, 9 tabel, migrasi + seed idempotent). API memakai PostgreSQL bila `DATABASE_URL` diisi, in-memory bila tidak — perilaku endpoint sama. |
 | REST API (API key, rate limiting, tier) | ✅ Jalan: register, `x-api-key`, rate limit/hari per tier, header `X-RateLimit-*` |
 | Dokumentasi API | ✅ Jalan: `/v1/docs` (HTML) + `/openapi.json` |
 | Developer portal (daftar, API key, statistik, paket, checkout) | ✅ Jalan: Astro — daftar, tampilkan key, statistik pemakaian, paket Free/Pro; checkout Midtrans masih placeholder demo |
@@ -146,9 +196,11 @@ waktu verifikasinya.
 
 ## Yang masih demo / harus dibangun untuk produksi
 
-1. **PostgreSQL** — ganti `apps/api/src/store.ts` (in-memory) dengan tabel
-   `api_keys` + `api_usage`; ganti `apps/api/src/data.ts` (seed) dengan
-   tabel `cars` + `car_specs` + `parameter_catalog`.
+1. **PostgreSQL — kerangka selesai, tinggal sambungkan Neon** —
+   skema, migrasi, seed, dan lapisan repository sudah terpasang dan
+   terverifikasi terhadap PostgreSQL lokal. Yang belum: isi `DATABASE_URL`
+   dari Neon (lihat "Database (PostgreSQL / Neon)") dan ganti data contoh
+   dengan data produksi terkurasi.
 2. **Pipeline scraping terjadwal** — ambil spek dari situs resmi pabrikan
    → simpan mentah → tahap review kurasi → baru tayang. (Sesuai janji ke
    klien: tiap nilai dicatat sumber + waktu verifikasi.)
@@ -178,3 +230,24 @@ waktu verifikasinya.
 - `GET /v1/docs` (HTML) ✅ · `GET /openapi.json` (8 path) ✅
 - `pnpm --filter @car-api/portal build` ✅ — 4 halaman, 2,49 detik
 - Portal: `/`, `/docs`, `/dashboard`, `/playground` semua **HTTP 200** ✅
+
+### Verifikasi PostgreSQL (19 Nov 2026, di VM ini — PostgreSQL 16 lokal)
+
+- `db:generate` ✅ — 9 tabel, migrasi `drizzle/0000_lonely_angel.sql`
+- `db:migrate` ✅ · `db:seed` ✅ — 8 merek, 10 mobil, 36 parameter,
+  202 nilai parameter, 2 paket (Free 100/hari, Pro 10.000/hari), key demo
+- Seed idempotent ✅ — dijalankan 2x, jumlah baris tetap (tidak ada duplikasi)
+- Key demo disimpan sebagai SHA-256 ✅ — `key_hash` di DB sama dengan
+  `sha256("carapi_demo_9f2e7a1b4c5d6e7f")`, bukan plaintext
+- API dengan `DATABASE_URL` (port 3002) ✅ — log "Penyimpanan:
+  PostgreSQL"; `POST /v1/auth/register` → key baru tersimpan di DB
+  (terbukti via `psql`: developer + api_keys bertambah); `GET /v1/specs`
+  → 10 mobil dari DB; `GET /v1/specs?powertrain=BEV` → 2 mobil;
+  `GET /v1/usage` → `usedToday`/`totalHits` sesuai `usage_logs` di DB
+- Rate limit mode DB ✅ — instance uji `PORT=3003
+  CARAPI_FREE_DAILY_LIMIT=5` → 5× `200`, lalu `429`; `usage_logs`
+  berisi tepat 5 baris (hit yang ditolak tidak dicatat)
+- API **tanpa** `DATABASE_URL` (port 3004) ✅ — log "Penyimpanan:
+  in-memory"; health `200`, BEV 2 mobil, tanpa key → `401` (perilaku
+  sama seperti sebelum kerangka DB dipasang)
+- `pnpm typecheck` (root, API + portal) ✅ · portal build ✅ (4 halaman)

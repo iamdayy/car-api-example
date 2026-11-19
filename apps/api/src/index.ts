@@ -16,8 +16,8 @@
  * pro 10.000/hari — bisa diubah lewat env CARAPI_FREE_DAILY_LIMIT /
  * CARAPI_PRO_DAILY_LIMIT untuk pengujian).
  *
- * Penyimpanan di contoh ini IN-MEMORY. Produksi: PostgreSQL
- * (lihat README).
+ * Penyimpanan: PostgreSQL (Drizzle) bila DATABASE_URL diisi, in-memory
+ * bila tidak (lihat ./db/client.ts). Perilaku endpoint SAMA di kedua mode.
  */
 import { serve } from "@hono/node-server";
 import { cors } from "hono/cors";
@@ -30,18 +30,30 @@ import {
   TIER_PRICES,
   type Powertrain,
 } from "@car-api/shared";
-import { DATA_DISCLAIMER, SEED_CARS } from "./data.js";
+import { DATA_DISCLAIMER } from "./data.js";
 import { docsHtml } from "./docs.js";
 import { OPENAPI_SPEC } from "./openapi.js";
-import { store, type ApiKeyRecord } from "./store.js";
+import { store, type ApiKeyRecord, type KeyStoreLike } from "./store.js";
+import { isDbEnabled } from "./db/client.js";
+import {
+  createDbKeyStore,
+  getDbCarStore,
+  MemoryCarStore,
+  type CarStoreLike,
+} from "./db/stores.js";
 
 const PORT = Number(process.env.PORT) || 3001;
 const API_BASE = process.env.CARAPI_PUBLIC_URL || `http://localhost:${PORT}`;
 
+// Pilih lapisan penyimpanan: PostgreSQL bila DATABASE_URL diisi,
+// in-memory bila tidak. Kontrak keduanya sama (lihat ./db/stores.ts).
+const keyStore: KeyStoreLike = isDbEnabled ? await createDbKeyStore() : store;
+const carStore: CarStoreLike = isDbEnabled ? getDbCarStore() : new MemoryCarStore();
+
 const app = new Hono();
 app.use("*", cors());
 
-const demo = store.seedDemoKey();
+const demo = await keyStore.seedDemoKey();
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -64,19 +76,19 @@ function json(data: unknown, status = 200, extraHeaders: Record<string, string> 
  * Middleware auth + rate limit untuk endpoint yang butuh API key.
  * Mengembalikan Response error, atau record key bila lolos.
  */
-function requireKey(c: {
-  req: { header: (name: string) => string | undefined };
-}): ApiKeyRecord | Response {
+async function requireKey(c: {
+  req: { header: (name: string) => string | undefined; path: string };
+}): Promise<ApiKeyRecord | Response> {
   const key = c.req.header("x-api-key");
   if (!key) {
     return err("unauthorized", "Header x-api-key wajib diisi. Daftar di portal untuk mendapatkan API key.", 401);
   }
-  const rec = store.get(key);
+  const rec = await keyStore.get(key);
   if (!rec) {
     return err("unauthorized", "API key tidak valid.", 401);
   }
-  const result = store.recordHit(rec);
-  const usage = store.usageFor(rec);
+  const result = await keyStore.recordHit(rec, c.req.path);
+  const usage = await keyStore.usageFor(rec);
   if (!result.allowed) {
     return new Response(
       JSON.stringify({
@@ -99,8 +111,8 @@ function requireKey(c: {
   return rec;
 }
 
-function rateLimitHeaders(rec: ApiKeyRecord): Record<string, string> {
-  const usage = store.usageFor(rec);
+async function rateLimitHeaders(rec: ApiKeyRecord): Promise<Record<string, string>> {
+  const usage = await keyStore.usageFor(rec);
   return {
     "X-RateLimit-Limit": String(usage.limitPerDay),
     "X-RateLimit-Remaining": String(usage.remainingToday),
@@ -145,14 +157,14 @@ app.post("/v1/auth/register", async (c) => {
   if (!name || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return err("bad_request", "Field name dan email (format email valid) wajib diisi.", 400);
   }
-  const rec = store.create(name, email, "free");
+  const rec = await keyStore.create(name, email, "free");
   return json(
     {
       apiKey: rec.key,
       name: rec.name,
       email: rec.email,
       tier: rec.tier,
-      limitPerDay: store.limitFor(rec.tier),
+      limitPerDay: keyStore.limitFor(rec.tier),
       message:
         "Simpan API key ini baik-baik — key hanya ditampilkan sekali di sini. Di produksi, key dikirim juga lewat email.",
       dashboard: "Buka developer portal untuk melihat pemakaian dan upgrade tier.",
@@ -164,8 +176,8 @@ app.post("/v1/auth/register", async (c) => {
 // ---------------------------------------------------------------------------
 // Specs
 // ---------------------------------------------------------------------------
-app.get("/v1/specs", (c) => {
-  const keyOrErr = requireKey(c);
+app.get("/v1/specs", async (c) => {
+  const keyOrErr = await requireKey(c);
   if (keyOrErr instanceof Response) return keyOrErr;
 
   const brand = c.req.query("brand")?.toLowerCase();
@@ -185,7 +197,8 @@ app.get("/v1/specs", (c) => {
     return err("bad_request", "year harus angka tahun, contoh: 2024.", 400);
   }
 
-  const filtered = SEED_CARS.filter((car) => {
+  const allCars = await carStore.listCars();
+  const filtered = allCars.filter((car) => {
     if (brand && !car.brand.toLowerCase().includes(brand)) return false;
     if (powertrain && car.powertrain !== powertrain) return false;
     if (year !== undefined && car.year !== year) return false;
@@ -203,44 +216,45 @@ app.get("/v1/specs", (c) => {
       data: filtered,
       meta: {
         count: filtered.length,
-        total: SEED_CARS.length,
+        total: allCars.length,
         disclaimer: DATA_DISCLAIMER,
       },
     },
     200,
-    rateLimitHeaders(keyOrErr),
+    await rateLimitHeaders(keyOrErr),
   );
 });
 
-app.get("/v1/specs/:id", (c) => {
-  const keyOrErr = requireKey(c);
+app.get("/v1/specs/:id", async (c) => {
+  const keyOrErr = await requireKey(c);
   if (keyOrErr instanceof Response) return keyOrErr;
 
-  const car = SEED_CARS.find((s) => s.id === c.req.param("id"));
+  const car = await carStore.getCar(c.req.param("id"));
   if (!car) {
     return err("not_found", `Mobil dengan id '${c.req.param("id")}' tidak ditemukan.`, 404);
   }
   return json(
     { data: car, meta: { disclaimer: DATA_DISCLAIMER } },
     200,
-    rateLimitHeaders(keyOrErr),
+    await rateLimitHeaders(keyOrErr),
   );
 });
 
-app.get("/v1/brands", (c) => {
-  const keyOrErr = requireKey(c);
+app.get("/v1/brands", async (c) => {
+  const keyOrErr = await requireKey(c);
   if (keyOrErr instanceof Response) return keyOrErr;
 
+  const allCars = await carStore.listCars();
   const counts = new Map<string, number>();
-  for (const car of SEED_CARS) counts.set(car.brand, (counts.get(car.brand) ?? 0) + 1);
+  for (const car of allCars) counts.set(car.brand, (counts.get(car.brand) ?? 0) + 1);
   const brands = [...counts.entries()]
     .map(([brand, models]) => ({ brand, models }))
     .sort((a, b) => a.brand.localeCompare(b.brand));
-  return json({ data: brands, meta: { count: brands.length } }, 200, rateLimitHeaders(keyOrErr));
+  return json({ data: brands, meta: { count: brands.length } }, 200, await rateLimitHeaders(keyOrErr));
 });
 
-app.get("/v1/parameters", (c) => {
-  const keyOrErr = requireKey(c);
+app.get("/v1/parameters", async (c) => {
+  const keyOrErr = await requireKey(c);
   if (keyOrErr instanceof Response) return keyOrErr;
 
   return json(
@@ -256,18 +270,18 @@ app.get("/v1/parameters", (c) => {
       },
     },
     200,
-    rateLimitHeaders(keyOrErr),
+    await rateLimitHeaders(keyOrErr),
   );
 });
 
 // ---------------------------------------------------------------------------
 // Usage
 // ---------------------------------------------------------------------------
-app.get("/v1/usage", (c) => {
-  const keyOrErr = requireKey(c);
+app.get("/v1/usage", async (c) => {
+  const keyOrErr = await requireKey(c);
   if (keyOrErr instanceof Response) return keyOrErr;
 
-  const usage = store.usageFor(keyOrErr);
+  const usage = await keyStore.usageFor(keyOrErr);
   return json(
     {
       data: {
@@ -286,7 +300,7 @@ app.get("/v1/usage", (c) => {
       },
     },
     200,
-    rateLimitHeaders(keyOrErr),
+    await rateLimitHeaders(keyOrErr),
   );
 });
 
@@ -299,6 +313,11 @@ app.notFound((c) =>
 
 serve({ fetch: app.fetch, port: PORT }, () => {
   console.log(`Car Web API berjalan di ${API_BASE}`);
+  console.log(
+    isDbEnabled
+      ? "Penyimpanan: PostgreSQL (DATABASE_URL)"
+      : "Penyimpanan: in-memory (DATABASE_URL tidak diisi)",
+  );
   console.log(`Dokumentasi: ${API_BASE}/v1/docs`);
   console.log(`Key demo (free): ${demo.key}`);
 });

@@ -1,0 +1,66 @@
+---
+import Layout from "../layouts/Layout.astro";
+
+const API_URL = import.meta.env.PUBLIC_API_URL ?? "http://localhost:3001";
+const DEMO_KEY = "carapi_demo_9f2e7a1b4c5d6e7f";
+---
+<Layout title="Coba API" description="Uji endpoint Car Web API langsung dari browser.">
+  <h1>Coba API</h1>
+  <p class="lead">Pilih endpoint, isi API key Anda (atau pakai key demo), lalu lihat response JSON-nya langsung.</p>
+
+  <div class="card">
+    <label for="api-key">API key (header x-api-key)</label>
+    <input id="api-key" type="text" value={DEMO_KEY} />
+    <p class="small muted">Key demo di atas (tier Free). Key Anda sendiri tersimpan otomatis setelah daftar di <a href="/dashboard">dashboard</a>.</p>
+
+    <label for="endpoint">Endpoint</label>
+    <select id="endpoint">
+      <option value="/v1/specs">GET /v1/specs — daftar spek</option>
+      <option value="/v1/specs/byd-atto-3-superior-2024">GET /v1/specs/:id — BYD Atto 3</option>
+      <option value="/v1/specs/toyota-kijang-innova-zenix-q-hv-2024">GET /v1/specs/:id — Innova Zenix Hybrid</option>
+      <option value="/v1/brands">GET /v1/brands — daftar merek</option>
+      <option value="/v1/parameters">GET /v1/parameters — katalog parameter</option>
+      <option value="/v1/usage">GET /v1/usage — statistik pemakaian</option>
+    </select>
+
+    <label for="query">Query string (opsional, contoh: brand=Toyota atau powertrain=BEV)</label>
+    <input id="query" type="text" placeholder="brand=Toyota" />
+
+    <button class="btn" id="send" type="button">Kirim request</button>
+    <p id="req-info" class="small muted"></p>
+  </div>
+
+  <h2>Response</h2>
+  <pre><code id="response">Belum ada request. Pilih endpoint lalu tekan "Kirim request".</code></pre>
+
+  <script define:vars={{ apiUrl: API_URL, demoKey: DEMO_KEY }}>
+    const $ = (id) => document.getElementById(id);
+    const saved = localStorage.getItem("carapi_key");
+    if (saved) $("api-key").value = saved;
+
+    $("send").addEventListener("click", async () => {
+      const key = $("api-key").value.trim();
+      let path = $("endpoint").value;
+      const q = $("query").value.trim();
+      if (q) path += (path.includes("?") ? "&" : "?") + q;
+      const url = apiUrl + path;
+      $("req-info").textContent = "GET " + url;
+      $("response").textContent = "Mengirim…";
+      try {
+        const res = await fetch(url, { headers: { "x-api-key": key } });
+        const text = await res.text();
+        let pretty = text;
+        try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch {}
+        const limit = res.headers.get("x-ratelimit-limit");
+        const remaining = res.headers.get("x-ratelimit-remaining");
+        $("response").textContent =
+          "HTTP " + res.status + " " + res.statusText +
+          (limit ? "\nX-RateLimit-Limit: " + limit + " | X-RateLimit-Remaining: " + remaining : "") +
+          "\n\n" + pretty;
+        $("req-info").textContent = "GET " + url + " → HTTP " + res.status;
+      } catch (e) {
+        $("response").textContent = "Gagal menghubungi API di " + apiUrl + ". Jalankan dulu: pnpm dev. Error: " + e.message;
+      }
+    });
+  </script>
+</Layout>

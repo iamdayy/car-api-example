@@ -1,0 +1,144 @@
+---
+import Layout from "../layouts/Layout.astro";
+
+const API_URL = import.meta.env.PUBLIC_API_URL ?? "http://localhost:3001";
+---
+<Layout title="Dashboard" description="Daftar, kelola API key, lihat pemakaian, dan upgrade paket.">
+  <h1>Dashboard Developer</h1>
+  <p class="lead">Daftar untuk mendapatkan API key, pantau pemakaian harian, dan upgrade paket saat butuh kuota lebih besar.</p>
+
+  <div id="register-card" class="card">
+    <h3>1. Daftar &amp; dapatkan API key</h3>
+    <form id="register-form">
+      <label for="name">Nama</label>
+      <input id="name" name="name" type="text" placeholder="Budi Santoso" required />
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" placeholder="budi@contoh.id" required />
+      <button class="btn" type="submit">Buat API key</button>
+    </form>
+    <p id="register-msg" class="small muted"></p>
+  </div>
+
+  <div id="key-card" class="card" hidden>
+    <h3>API key Anda</h3>
+    <div class="keybox" id="api-key-display"></div>
+    <p class="small muted">Simpan key ini baik-baik. Key tersimpan di browser Anda (localStorage) untuk halaman ini.</p>
+    <button class="btn ghost" id="copy-key" type="button">Salin API key</button>
+    <button class="btn ghost" id="logout-key" type="button">Hapus dari browser</button>
+  </div>
+
+  <div id="usage-card" class="card" hidden>
+    <h3>2. Statistik pemakaian</h3>
+    <p><strong>Tier:</strong> <span id="usage-tier">-</span> &nbsp;•&nbsp; <strong>Limit harian:</strong> <span id="usage-limit">-</span> &nbsp;•&nbsp; <strong>Total hit:</strong> <span id="usage-total">-</span></p>
+    <p><strong>Terpakai hari ini:</strong> <span id="usage-used">-</span> / <span id="usage-limit-2">-</span> &nbsp;•&nbsp; <strong>Sisa kuota:</strong> <span id="usage-remaining">-</span></p>
+    <div class="bar"><div id="usage-bar" style="width:0%"></div></div>
+    <p class="small muted">Reset kuota: <span id="usage-reset">-</span></p>
+    <button class="btn ghost" id="refresh-usage" type="button">Perbarui statistik</button>
+    <p id="usage-msg" class="small muted"></p>
+  </div>
+
+  <h2>3. Paket</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>Free — Rp0</h3>
+      <p>100 request/hari<br />Semua endpoint spek<br />Statistik pemakaian</p>
+      <p class="small muted">Paket aktif saat Anda mendaftar.</p>
+    </div>
+    <div class="card">
+      <h3>Pro — Rp99.000/bulan <span class="pill">harga contoh</span></h3>
+      <p>10.000 request/hari<br />Semua endpoint spek<br />Statistik pemakaian + prioritas</p>
+      <button class="btn" id="topup-btn" type="button">Top-up / Upgrade (Demo)</button>
+    </div>
+  </div>
+
+  <div id="midtrans-modal" class="card" hidden>
+    <h3>Pembayaran — placeholder demo</h3>
+    <p>
+      Ini adalah <strong>placeholder demo</strong>, bukan integrasi Midtrans sungguhan.
+      Di produksi, tombol ini membuka halaman pembayaran Midtrans (Snap) — QRIS, transfer bank,
+      dan e-wallet — dengan akun Midtrans dan API key dari pemilik produk. Setelah pembayaran
+      berhasil, Midtrans mengirim notifikasi ke server, dan tier akun otomatis naik ke Pro.
+    </p>
+    <button class="btn ghost" id="close-modal" type="button">Tutup</button>
+  </div>
+
+  <script define:vars={{ apiUrl: API_URL }}>
+    const LS_KEY = "carapi_key";
+    const $ = (id) => document.getElementById(id);
+
+    function showKey(key) {
+      $("key-card").hidden = false;
+      $("api-key-display").textContent = key;
+      $("usage-card").hidden = false;
+      loadUsage(key);
+    }
+
+    async function loadUsage(key) {
+      const msg = $("usage-msg");
+      msg.textContent = "Memuat statistik…";
+      try {
+        const res = await fetch(apiUrl + "/v1/usage", { headers: { "x-api-key": key } });
+        const body = await res.json();
+        if (!res.ok) { msg.textContent = "Gagal memuat: " + (body.error?.message ?? res.status); return; }
+        const d = body.data;
+        $("usage-tier").textContent = d.tier;
+        $("usage-limit").textContent = d.limitPerDay.toLocaleString("id-ID");
+        $("usage-limit-2").textContent = d.limitPerDay.toLocaleString("id-ID");
+        $("usage-used").textContent = d.usedToday.toLocaleString("id-ID");
+        $("usage-remaining").textContent = d.remainingToday.toLocaleString("id-ID");
+        $("usage-total").textContent = d.totalHits.toLocaleString("id-ID");
+        $("usage-reset").textContent = new Date(d.resetsAt).toLocaleString("id-ID");
+        $("usage-bar").style.width = Math.min(100, (d.usedToday / d.limitPerDay) * 100) + "%";
+        msg.textContent = "";
+      } catch (e) {
+        msg.textContent = "API belum berjalan? Jalankan dulu: pnpm dev (API di " + apiUrl + ").";
+      }
+    }
+
+    $("register-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = $("name").value.trim();
+      const email = $("email").value.trim();
+      const msg = $("register-msg");
+      msg.textContent = "Mendaftarkan…";
+      try {
+        const res = await fetch(apiUrl + "/v1/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, email }),
+        });
+        const body = await res.json();
+        if (!res.ok) { msg.textContent = "Gagal: " + (body.error?.message ?? res.status); return; }
+        localStorage.setItem(LS_KEY, body.apiKey);
+        msg.textContent = "Berhasil! API key Anda (tier " + body.tier + ", limit " + body.limitPerDay + " request/hari).";
+        showKey(body.apiKey);
+      } catch (err) {
+        msg.textContent = "API belum berjalan? Jalankan dulu: pnpm dev (API di " + apiUrl + ").";
+      }
+    });
+
+    $("copy-key").addEventListener("click", async () => {
+      await navigator.clipboard.writeText($("api-key-display").textContent);
+      $("copy-key").textContent = "Disalin!";
+      setTimeout(() => { $("copy-key").textContent = "Salin API key"; }, 1500);
+    });
+
+    $("logout-key").addEventListener("click", () => {
+      localStorage.removeItem(LS_KEY);
+      $("key-card").hidden = true;
+      $("usage-card").hidden = true;
+      $("register-msg").textContent = "API key dihapus dari browser.";
+    });
+
+    $("refresh-usage").addEventListener("click", () => {
+      const key = localStorage.getItem(LS_KEY);
+      if (key) loadUsage(key);
+    });
+
+    $("topup-btn").addEventListener("click", () => { $("midtrans-modal").hidden = false; });
+    $("close-modal").addEventListener("click", () => { $("midtrans-modal").hidden = true; });
+
+    const saved = localStorage.getItem(LS_KEY);
+    if (saved) showKey(saved);
+  </script>
+</Layout>

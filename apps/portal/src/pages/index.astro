@@ -1,0 +1,63 @@
+---
+import Layout from "../layouts/Layout.astro";
+
+const API_URL = import.meta.env.PUBLIC_API_URL ?? "http://localhost:3001";
+const DEMO_KEY = "carapi_demo_9f2e7a1b4c5d6e7f";
+---
+<Layout title="Beranda" description="API spesifikasi mobil yang beredar di Indonesia — satu API key, dokumentasi lengkap, developer portal.">
+  <h1>Spesifikasi mobil Indonesia,<br />lewat satu API.</h1>
+  <p class="lead">
+    Car Web API menyediakan data spek mobil yang beredar di Indonesia — bensin, hybrid,
+    sampai listrik — dengan satu format yang konsisten, API key, dan statistik pemakaian.
+    Seperti dashboard API pada umumnya, tapi khusus mobil.
+  </p>
+  <p>
+    <a class="btn" href="/dashboard">Dapatkan API Key gratis</a>
+    &nbsp; <a class="btn ghost" href="/docs">Baca dokumentasi</a>
+  </p>
+
+  <h2>Kenapa API ini beda</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>Satu format untuk semua jenis penggerak</h3>
+      <p class="muted">ICE, MHEV, FHEV, PHEV, REEV, BEV, FCEV, PFCEV — satu objek spek yang sama. Field yang tidak berlaku dikosongkan, jadi integrasi Anda tidak perlu menebak-nebak.</p>
+    </div>
+    <div class="card">
+      <h3>Data terkurasi, bukan salinan mentah</h3>
+      <p class="muted">Setiap nilai disimpan beserta sumber dan waktu verifikasinya, lalu direview sebelum tayang. Cakupan awal: mobil yang beredar di Indonesia.</p>
+    </div>
+    <div class="card">
+      <h3>API key + tier + statistik</h3>
+      <p class="muted">Daftar, dapatkan API key, pantau pemakaian harian, dan upgrade ke Pro saat butuh kuota lebih besar — semua dari developer portal.</p>
+    </div>
+  </div>
+
+  <h2>Contoh live — diambil langsung dari API</h2>
+  <p class="muted small">Request di bawah ini benar-benar dipanggil ke API saat halaman dimuat (key demo).</p>
+  <pre><code id="live-example">Memuat contoh dari API…</code></pre>
+  <p class="small muted">
+    Coba sendiri: <code>curl {API_URL}/v1/specs?brand=Toyota -H "x-api-key: {DEMO_KEY}"</code>
+  </p>
+
+  <h2>Paket</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>Free — Rp0</h3>
+      <p>100 request/hari<br />Semua endpoint spek<br />Statistik pemakaian</p>
+      <a class="btn ghost" href="/dashboard">Daftar gratis</a>
+    </div>
+    <div class="card">
+      <h3>Pro — Rp99.000/bulan <span class="pill">contoh</span></h3>
+      <p>10.000 request/hari<br />Semua endpoint spek<br />Statistik pemakaian + prioritas</p>
+      <a class="btn" href="/dashboard">Lihat di dashboard</a>
+    </div>
+  </div>
+
+  <script define:vars={{ apiUrl: API_URL, demoKey: DEMO_KEY }}>
+    const el = document.getElementById("live-example");
+    fetch(apiUrl + "/v1/specs?brand=Toyota", { headers: { "x-api-key": demoKey } })
+      .then((r) => r.json())
+      .then((j) => { el.textContent = JSON.stringify(j, null, 2); })
+      .catch((e) => { el.textContent = "API belum berjalan? Jalankan dulu: pnpm dev (API di " + apiUrl + "). Error: " + e.message; });
+  </script>
+</Layout>

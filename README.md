@@ -1,18 +1,5 @@
 # Car Web API — Contoh Prototype (Turborepo)
 
-Contoh nyata (prototype yang bisa dijalankan) dari proyek **Car Web API**
-untuk klien Projects.co.id (AntekAsing): API spesifikasi mobil + developer
-portal, seperti dashboard.api.co.id tapi khusus mobil — **bukan** public
-website katalog seperti auto-data.net.
-
-Scope yang disepakati dengan klien (Rp7.000.000, 40 hari): pengumpulan +
-kurasi data spek mobil, database, REST API (API key, rate limiting, tier
-penggunaan), dokumentasi API, dan developer portal (daftar, API key,
-statistik pemakaian, paket, checkout/top-up via Midtrans).
-
-> Prototype ini dibuat untuk DIDEMOKAN ke klien. Bagian yang masih demo
-> terdaftar jelas di bawah ("Yang masih demo").
-
 ## Arsitektur (Turborepo)
 
 ```
@@ -69,14 +56,14 @@ Server dev tetap berjalan setelah verifikasi (API :3001, portal :4321).
 
 **Variabel env (opsional):**
 
-| Variabel | Default | Keterangan |
-|---|---|---|
-| `DATABASE_URL` | *(kosong)* | Connection string PostgreSQL. Bila kosong → API jalan in-memory seperti semula. Bila diisi → API memakai PostgreSQL (Drizzle). Lihat "Database (PostgreSQL / Neon)". |
-| `PORT` | `3001` | Port API |
-| `CARAPI_PUBLIC_URL` | `http://localhost:PORT` | URL publik API (dipakai di halaman docs) |
-| `CARAPI_FREE_DAILY_LIMIT` | `100` | Kuota harian tier Free (bisa dikecilkan untuk uji rate limit) |
-| `CARAPI_PRO_DAILY_LIMIT` | `10000` | Kuota harian tier Pro |
-| `PUBLIC_API_URL` | `http://localhost:3001` | URL API yang dipakai portal (Astro) |
+| Variabel                  | Default                 | Keterangan                                                                                                                                                           |
+| ------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`            | _(kosong)_              | Connection string PostgreSQL. Bila kosong → API jalan in-memory seperti semula. Bila diisi → API memakai PostgreSQL (Drizzle). Lihat "Database (PostgreSQL / Neon)". |
+| `PORT`                    | `3001`                  | Port API                                                                                                                                                             |
+| `CARAPI_PUBLIC_URL`       | `http://localhost:PORT` | URL publik API (dipakai di halaman docs)                                                                                                                             |
+| `CARAPI_FREE_DAILY_LIMIT` | `100`                   | Kuota harian tier Free (bisa dikecilkan untuk uji rate limit)                                                                                                        |
+| `CARAPI_PRO_DAILY_LIMIT`  | `10000`                 | Kuota harian tier Pro                                                                                                                                                |
+| `PUBLIC_API_URL`          | `http://localhost:3001` | URL API yang dipakai portal (Astro)                                                                                                                                  |
 
 ## Database (PostgreSQL / Neon)
 
@@ -115,7 +102,7 @@ nilai), `developers`, `api_keys` (hanya SHA-256 dari key, bukan plaintext),
 `usage_logs`, `plans`, `payments`. API key demo yang sama seperti mode
 in-memory: `carapi_demo_9f2e7a1b4c5d6e7f` (tier free).
 
-**Catatan Neon:** pakai *pooled* connection string dari dashboard Neon.
+**Catatan Neon:** pakai _pooled_ connection string dari dashboard Neon.
 Driver dikonfigurasi `prepare: false` karena PgBouncer (mode transaksi)
 tidak mendukung prepared statement — pengaturan ini juga aman untuk
 PostgreSQL lokal.
@@ -127,17 +114,17 @@ Semua endpoint `/v1/*` (kecuali register, docs, openapi.json) butuh header
 dengan header `X-RateLimit-Limit`, `X-RateLimit-Remaining`,
 `X-RateLimit-Reset`.
 
-| Method | Path | Keterangan |
-|---|---|---|
-| `GET` | `/` | Health check |
-| `GET` | `/v1/specs` | Daftar spek. Filter: `?brand=`, `?powertrain=`, `?year=`, `?search=` |
-| `GET` | `/v1/specs/:id` | Satu spek berdasarkan id |
-| `GET` | `/v1/brands` | Daftar merek + jumlah model |
-| `GET` | `/v1/parameters` | Katalog parameter + powertrain yang berlaku |
-| `POST` | `/v1/auth/register` | Daftar (`{"name","email"}`) → API key baru, tier Free |
-| `GET` | `/v1/usage` | Statistik pemakaian API key (hit hari ini, sisa kuota, total) |
-| `GET` | `/v1/docs` | Dokumentasi API (HTML) |
-| `GET` | `/openapi.json` | Spesifikasi OpenAPI 3.0 |
+| Method | Path                | Keterangan                                                           |
+| ------ | ------------------- | -------------------------------------------------------------------- |
+| `GET`  | `/`                 | Health check                                                         |
+| `GET`  | `/v1/specs`         | Daftar spek. Filter: `?brand=`, `?powertrain=`, `?year=`, `?search=` |
+| `GET`  | `/v1/specs/:id`     | Satu spek berdasarkan id                                             |
+| `GET`  | `/v1/brands`        | Daftar merek + jumlah model                                          |
+| `GET`  | `/v1/parameters`    | Katalog parameter + powertrain yang berlaku                          |
+| `POST` | `/v1/auth/register` | Daftar (`{"name","email"}`) → API key baru, tier Free                |
+| `GET`  | `/v1/usage`         | Statistik pemakaian API key (hit hari ini, sisa kuota, total)        |
+| `GET`  | `/v1/docs`          | Dokumentasi API (HTML)                                               |
+| `GET`  | `/openapi.json`     | Spesifikasi OpenAPI 3.0                                              |
 
 **Key demo** (tier Free, untuk mencoba tanpa daftar):
 `carapi_demo_9f2e7a1b4c5d6e7f`
@@ -169,15 +156,15 @@ curl http://localhost:3001/v1/usage \
 
 ## Pemetaan ke scope yang dijanjikan ke klien
 
-| Scope (Rp7jt) | Status di prototype ini |
-|---|---|
-| Pengumpulan + kurasi data spek | Seed 10 mobil Indonesia di `apps/api/src/data.ts` — **DATA CONTOH**, tiap nilai harus diverifikasi dari situs resmi pabrikan sebelum tayang (lihat bawah) |
-| Database | ✅ Kerangka PostgreSQL terpasang (Drizzle ORM, 9 tabel, migrasi + seed idempotent). API memakai PostgreSQL bila `DATABASE_URL` diisi, in-memory bila tidak — perilaku endpoint sama. |
-| REST API (API key, rate limiting, tier) | ✅ Jalan: register, `x-api-key`, rate limit/hari per tier, header `X-RateLimit-*` |
-| Dokumentasi API | ✅ Jalan: `/v1/docs` (HTML) + `/openapi.json` |
-| Developer portal (daftar, API key, statistik, paket, checkout) | ✅ Jalan: Astro — daftar, tampilkan key, statistik pemakaian, paket Free/Pro; checkout Midtrans masih placeholder demo |
-| Checkout/top-up Midtrans | ⚠️ Placeholder demo (tombol membuka penjelasan, bukan pembayaran sungguhan) |
-| Public website katalog (auto-data.net) | ❌ Sengaja TIDAK termasuk — sesuai kesepakatan dengan klien |
+| Scope (Rp7jt)                                                  | Status di prototype ini                                                                                                                                                              |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Pengumpulan + kurasi data spek                                 | Seed 10 mobil Indonesia di `apps/api/src/data.ts` — **DATA CONTOH**, tiap nilai harus diverifikasi dari situs resmi pabrikan sebelum tayang (lihat bawah)                            |
+| Database                                                       | ✅ Kerangka PostgreSQL terpasang (Drizzle ORM, 9 tabel, migrasi + seed idempotent). API memakai PostgreSQL bila `DATABASE_URL` diisi, in-memory bila tidak — perilaku endpoint sama. |
+| REST API (API key, rate limiting, tier)                        | ✅ Jalan: register, `x-api-key`, rate limit/hari per tier, header `X-RateLimit-*`                                                                                                    |
+| Dokumentasi API                                                | ✅ Jalan: `/v1/docs` (HTML) + `/openapi.json`                                                                                                                                        |
+| Developer portal (daftar, API key, statistik, paket, checkout) | ✅ Jalan: Astro — daftar, tampilkan key, statistik pemakaian, paket Free/Pro; checkout Midtrans masih placeholder demo                                                               |
+| Checkout/top-up Midtrans                                       | ⚠️ Placeholder demo (tombol membuka penjelasan, bukan pembayaran sungguhan)                                                                                                          |
+| Public website katalog (auto-data.net)                         | ❌ Sengaja TIDAK termasuk — sesuai kesepakatan dengan klien                                                                                                                          |
 
 ## Data contoh — baca sebelum demo ke klien
 
@@ -245,7 +232,7 @@ waktu verifikasinya.
   → 10 mobil dari DB; `GET /v1/specs?powertrain=BEV` → 2 mobil;
   `GET /v1/usage` → `usedToday`/`totalHits` sesuai `usage_logs` di DB
 - Rate limit mode DB ✅ — instance uji `PORT=3003
-  CARAPI_FREE_DAILY_LIMIT=5` → 5× `200`, lalu `429`; `usage_logs`
+CARAPI_FREE_DAILY_LIMIT=5` → 5× `200`, lalu `429`; `usage_logs`
   berisi tepat 5 baris (hit yang ditolak tidak dicatat)
 - API **tanpa** `DATABASE_URL` (port 3004) ✅ — log "Penyimpanan:
   in-memory"; health `200`, BEV 2 mobil, tanpa key → `401` (perilaku
